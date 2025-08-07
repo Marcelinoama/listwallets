@@ -3,7 +3,7 @@ import asyncio
 import json
 import random
 from typing import List, Dict, Optional, Set
-from config import SOLANA_RPC_URLS, MAX_WALLETS_DISPLAY, RPC_RETRY_ATTEMPTS, RPC_RETRY_DELAY, RPC_REQUEST_DELAY
+from config import SOLANA_RPC_URLS, MAX_WALLETS_DISPLAY, RPC_RETRY_ATTEMPTS, RPC_RETRY_DELAY, RPC_REQUEST_DELAY, RPC_CONFIGS
 import base64
 import base58
 
@@ -45,6 +45,14 @@ class SolanaRPC:
         """Roda para próxima URL RPC em caso de erro"""
         self.current_rpc_index += 1
     
+    def is_using_premium_rpc(self) -> bool:
+        """Verifica se está usando RPC premium (Tatum) atualmente"""
+        try:
+            current_rpc = self.rpc_urls[self.current_rpc_index % len(self.rpc_urls)]
+            return current_rpc in RPC_CONFIGS
+        except:
+            return False
+    
     async def rpc_request(self, method: str, params: list, timeout: int = 30) -> Optional[Dict]:
         """Faz requisição RPC para Solana com retry automático e rate limiting"""
         
@@ -69,8 +77,16 @@ class SolanaRPC:
                     else:
                         await asyncio.sleep(RPC_REQUEST_DELAY)
                     
+                    # Verifica se este RPC precisa de headers especiais (ex: Tatum)
+                    headers = {}
+                    if rpc_url in RPC_CONFIGS:
+                        headers = RPC_CONFIGS[rpc_url]['headers']
+                        rpc_type = RPC_CONFIGS[rpc_url]['type']
+                        if retry_attempt == 0:  # Log apenas na primeira tentativa
+                            print(f"🔑 Usando RPC premium ({rpc_type}): {rpc_url[:30]}...")
+                    
                     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                        async with session.post(rpc_url, json=payload) as response:
+                        async with session.post(rpc_url, json=payload, headers=headers) as response:
                             if response.status == 200:
                                 data = await response.json()
                                 if 'result' in data:
@@ -237,9 +253,18 @@ class SolanaRPC:
             buyers_list = []
             processed_owners = set()
             
-            # DRASTICAMENTE REDUZIDO: apenas 2 contas para evitar rate limit
-            max_accounts_to_process = min(2, len(largest_accounts))
-            print(f"⚙️ Processando apenas {max_accounts_to_process} contas (mínimo para evitar rate limit)")
+            # Calcula quantas contas processar - mais agressivo com RPC premium
+            if self.is_using_premium_rpc():
+                # RPC premium: sem limitações, pode processar muito mais
+                accounts_needed = min(20, len(largest_accounts), MAX_WALLETS_DISPLAY // 2)
+                print(f"⭐ RPC Premium detectado - processamento acelerado!")
+            else:
+                # RPC gratuito: limitações para evitar rate limiting
+                accounts_needed = max(3, min(10, (MAX_WALLETS_DISPLAY // 3) + 2))
+                print(f"⚙️ RPC gratuito - processamento conservador")
+            
+            max_accounts_to_process = min(accounts_needed, len(largest_accounts))
+            print(f"⚙️ Processando {max_accounts_to_process} contas para buscar {MAX_WALLETS_DISPLAY} wallets")
             
             # Para cada conta de token, busca apenas algumas transações
             for i, account in enumerate(largest_accounts[:max_accounts_to_process]):
@@ -249,11 +274,18 @@ class SolanaRPC:
                 
                 print(f"📜 Conta {i+1}/{max_accounts_to_process}: {account_address[:8]}...")
                 
-                # LIMITE ULTRA REDUZIDO: apenas 10 transações
+                # Busca signatures para a conta
                 self.request_count += 1
-                await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # Delay ainda maior
                 
-                signatures = await self.get_signatures_for_address(account_address, 10)
+                # Delay otimizado baseado no tipo de RPC
+                if self.is_using_premium_rpc():
+                    await asyncio.sleep(0.2)  # RPC premium: delay mínimo
+                    signatures_limit = min(100, MAX_WALLETS_DISPLAY)  # Mais signatures
+                else:
+                    await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # RPC gratuito: delay maior
+                    signatures_limit = max(10, min(50, MAX_WALLETS_DISPLAY // 2))
+                
+                signatures = await self.get_signatures_for_address(account_address, signatures_limit)
                 
                 if not signatures:
                     print(f"⚠️ Nenhuma transação encontrada para {account_address[:8]}")
@@ -261,8 +293,15 @@ class SolanaRPC:
                 
                 print(f"✅ Encontradas {len(signatures)} transações")
                 
-                # Processa apenas as 3 transações mais antigas
-                max_sigs_to_process = min(3, len(signatures))
+                # Calcula quantas transações processar - otimizado para premium
+                if self.is_using_premium_rpc():
+                    # RPC premium: processa mais transações
+                    sigs_needed = min(20, len(signatures), MAX_WALLETS_DISPLAY // max_accounts_to_process + 5)
+                else:
+                    # RPC gratuito: limitado
+                    sigs_needed = max(3, min(10, MAX_WALLETS_DISPLAY // max_accounts_to_process))
+                
+                max_sigs_to_process = min(sigs_needed, len(signatures))
                 
                 for j, sig_info in enumerate(reversed(signatures[-max_sigs_to_process:])):
                     try:
@@ -275,7 +314,12 @@ class SolanaRPC:
                         print(f"🔍 Transação {j+1}/{max_sigs_to_process}...")
                         
                         self.request_count += 1
-                        await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # Delay grande
+                        
+                        # Delay otimizado para premium
+                        if self.is_using_premium_rpc():
+                            await asyncio.sleep(0.1)  # RPC premium: super rápido
+                        else:
+                            await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # RPC gratuito: delay grande
                         
                         # Busca detalhes da transação
                         tx_details = await self.get_transaction(signature)
@@ -304,23 +348,27 @@ class SolanaRPC:
                                 
                                 print(f"✅ Wallet encontrada: {wallet[:8]}... (timestamp: {block_time})")
                                 
-                                if len(buyers_list) >= min(10, MAX_WALLETS_DISPLAY):
+                                if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                                     print(f"🎯 Limite de wallets atingido!")
                                     break
                         
-                        if len(buyers_list) >= min(10, MAX_WALLETS_DISPLAY):
+                        if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                             break
                             
                     except Exception as e:
                         print(f"⚠️ Erro ao processar transação: {e}")
                         continue
                 
-                if len(buyers_list) >= min(10, MAX_WALLETS_DISPLAY):
+                if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                     break
                 
-                # Delay grande entre contas
-                print("⏳ Aguardando 3s entre contas...")
-                await asyncio.sleep(3)
+                # Delay otimizado entre contas
+                if self.is_using_premium_rpc():
+                    print("⏳ RPC premium: delay mínimo...")
+                    await asyncio.sleep(0.3)  # Premium: delay mínimo
+                else:
+                    print("⏳ Aguardando 3s entre contas...")
+                    await asyncio.sleep(3)  # Gratuito: delay grande
             
             print(f"🎉 Processo concluído! Encontradas {len(buyers_list)} wallets via RPC Solana")
             print(f"📊 Total de requisições feitas: {self.request_count}")

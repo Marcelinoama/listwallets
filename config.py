@@ -20,6 +20,10 @@ SOLSCAN_HEADERS = {
 # RPCs customizados (prioridade se configurados)
 CUSTOM_RPC_URLS_STRING = os.getenv('CUSTOM_RPC_URLS', '').strip()
 
+# Configuração Tatum RPC (premium com API key)
+TATUM_RPC_URL = os.getenv('TATUM_RPC_URL', '').strip()
+TATUM_API_KEY = os.getenv('TATUM_API_KEY', '').strip()
+
 # URLs RPC da Solana padrão (testadas e funcionais)
 _DEFAULT_RPC_URLS = [
     "https://api.mainnet-beta.solana.com",  # ✅ Testado - 47ms
@@ -44,8 +48,27 @@ if CUSTOM_RPC_URLS_STRING:
     for i, url in enumerate(CUSTOM_RPC_URLS, 1):
         print(f"   {i}. {url}")
 
-# Combina RPCs customizados (se configurados) com RPCs padrão
-SOLANA_RPC_URLS = CUSTOM_RPC_URLS + _DEFAULT_RPC_URLS
+# Adiciona RPC Tatum se configurado (prioridade máxima)
+TATUM_RPC_URLS = []
+if TATUM_RPC_URL and TATUM_API_KEY:
+    TATUM_RPC_URLS = [TATUM_RPC_URL]
+    print(f"⭐ RPC Tatum Premium configurado: {TATUM_RPC_URL}")
+    print(f"🔑 API Key: {TATUM_API_KEY[:10]}...{TATUM_API_KEY[-4:] if len(TATUM_API_KEY) > 14 else 'configurada'}")
+
+# Combina RPCs na ordem de prioridade: Tatum → Custom → Padrão
+SOLANA_RPC_URLS = TATUM_RPC_URLS + CUSTOM_RPC_URLS + _DEFAULT_RPC_URLS
+
+# Cria dicionário de configurações especiais por RPC
+RPC_CONFIGS = {}
+if TATUM_RPC_URL and TATUM_API_KEY:
+    RPC_CONFIGS[TATUM_RPC_URL] = {
+        'headers': {
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'x-api-key': TATUM_API_KEY
+        },
+        'type': 'tatum_premium'
+    }
 
 # Configurações para rate limiting (lidas do .env ou valores padrão)
 # AUMENTADOS para evitar rate limiting
