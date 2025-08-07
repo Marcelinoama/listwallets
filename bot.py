@@ -145,13 +145,18 @@ Digite /help para mais informações.
         try:
             print(f"🔍 Iniciando busca para token: {user_input}")
             
-            # Busca as wallets que compraram o token
-            buyers, token_info = await solscan_api.extract_buyers(user_input)
+            # Busca as wallets que compraram o token (agora com saldos)
+            try:
+                buyers, token_info, balance_info = await solscan_api.extract_buyers(user_input)
+            except ValueError:
+                # Fallback para compatibilidade
+                buyers, token_info = await solscan_api.extract_buyers(user_input)
+                balance_info = []
             
             print(f"📊 Busca concluída: {len(buyers)} wallets encontradas")
             
-            # Edita a mensagem com os resultados
-            await self.send_results(update, processing_msg, user_input, buyers, token_info)
+            # Edita a mensagem com os resultados (incluindo saldos)
+            await self.send_results(update, processing_msg, user_input, buyers, token_info, balance_info)
             
             print("✅ Processo completo finalizado")
             
@@ -176,7 +181,7 @@ Digite /help para mais informações.
                 except:
                     print("❌ Falha total na comunicação com Telegram")
     
-    async def send_results(self, update, processing_msg, token_address, buyers, token_info):
+    async def send_results(self, update, processing_msg, token_address, buyers, token_info, balance_info=None):
         """Envia os resultados da busca"""
         if not buyers:
             # Importa a configuração atual
@@ -232,9 +237,24 @@ Digite /help para mais informações.
         # VERSÃO SIMPLIFICADA para evitar problemas de Markdown
         result_text += "🥇 PRIMEIRAS WALLETS QUE COMPRARAM:\n\n"
         
-        # Mostra TODAS as wallets encontradas (como solicitado pelo usuário)
-        for i, wallet in enumerate(buyers, 1):
-            result_text += f"{i}. {wallet}\n"
+        # Mostra TODAS as wallets encontradas com saldos em formato monospace
+        if balance_info and len(balance_info) > 0:
+            # Usa dados detalhados com saldo
+            for i, wallet_data in enumerate(balance_info, 1):
+                wallet = wallet_data.get('wallet', '')
+                balance = wallet_data.get('balance', 0.0)
+                result_text += f"{i}. `{wallet}` **{balance:.2f}**\n"
+        else:
+            # Fallback: busca saldos das wallets na hora (mais lento)
+            from solana_rpc import solana_rpc
+            print("💰 Buscando saldos das wallets...")
+            for i, wallet in enumerate(buyers, 1):
+                try:
+                    balance = await solana_rpc.get_wallet_balance(wallet)
+                    result_text += f"{i}. `{wallet}` **{balance:.2f}**\n"
+                    print(f"💰 Wallet {i}: {balance:.2f}")
+                except:
+                    result_text += f"{i}. `{wallet}` **0.00**\n"
         
         result_text += f"\n🎯 **Total:** {len(buyers)} wallets em ordem cronológica"
         
@@ -257,15 +277,25 @@ Digite /help para mais informações.
             except Exception as e2:
                 print(f"❌ Erro ao editar mensagem: {e2}")
                 
-                # Terceira tentativa: nova mensagem simples com TODAS as wallets
+                # Terceira tentativa: nova mensagem simples com TODAS as wallets e saldos
                 try:
                     simple_msg = f"✅ ENCONTRADAS {len(buyers)} WALLETS:\n\n"
-                    for i, wallet in enumerate(buyers, 1):
-                        simple_msg += f"{i}. {wallet}\n"
-                    simple_msg += f"\nTotal: {len(buyers)} wallets"
+                    
+                    if balance_info and len(balance_info) > 0:
+                        # Usa dados com saldo se disponível (monospace)
+                        for i, wallet_data in enumerate(balance_info, 1):
+                            wallet = wallet_data.get('wallet', '')
+                            balance = wallet_data.get('balance', 0.0)
+                            simple_msg += f"{i}. {wallet} {balance:.2f}\n"
+                    else:
+                        # Fallback sem saldo (monospace)
+                        for i, wallet in enumerate(buyers, 1):
+                            simple_msg += f"{i}. {wallet} Saldo não disponível\n"
+                            
+                    simple_msg += f"\nTotal: {len(buyers)} wallets com saldos"
                     
                     await update.message.reply_text(simple_msg)
-                    print("✅ Resposta enviada com todas as wallets")
+                    print("✅ Resposta enviada com todas as wallets e saldos")
                 except Exception as e3:
                     print(f"❌ Erro total na comunicação: {e3}")
                     return

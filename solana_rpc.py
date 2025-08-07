@@ -14,6 +14,20 @@ class SolanaRPC:
         self.blacklisted_rpcs = {}  # RPC -> tempo_de_blacklist
         self.request_count = 0
         
+        # Endereços de programas do sistema Solana que devem ser filtrados
+        self.SYSTEM_PROGRAMS = {
+            '11111111111111111111111111111111',  # System Program
+            'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  # Token Program  
+            'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',  # Associated Token Program
+            'ComputeBudget111111111111111111111111111111',  # Compute Budget Program
+            'SysvarRent111111111111111111111111111111111',  # Sysvar Rent
+            'SysvarC1ock11111111111111111111111111111111',  # Sysvar Clock
+            'Vote111111111111111111111111111111111111111',  # Vote Program
+            'Stake11111111111111111111111111111111111111',  # Stake Program
+            'Config1111111111111111111111111111111111111',  # Config Program
+            'BPFLoaderUpgradeab1e11111111111111111111111',  # BPF Upgradeable Loader
+        }
+        
     async def get_current_rpc_url(self) -> str:
         """Retorna a URL RPC atual evitando RPCs blacklisted"""
         import time
@@ -52,6 +66,44 @@ class SolanaRPC:
             return current_rpc in RPC_CONFIGS
         except:
             return False
+    
+    def is_valid_user_wallet(self, wallet_address: str, mint_address: str) -> bool:
+        """
+        Verifica se um endereço é uma wallet de usuário válida
+        Filtra programas do sistema, endereços vazios e o próprio token
+        """
+        if not wallet_address or len(wallet_address) < 32:
+            return False
+            
+        # Filtra o próprio token
+        if wallet_address == mint_address:
+            return False
+            
+        # Filtra programas do sistema Solana
+        if wallet_address in self.SYSTEM_PROGRAMS:
+            return False
+            
+        # Filtra endereços que são claramente programas (terminam com muitos 1s)
+        if wallet_address.endswith('1' * 10):  # 10 ou mais '1's no final
+            return False
+            
+        return True
+    
+    async def get_wallet_balance(self, wallet_address: str) -> float:
+        """
+        Busca o saldo de SOL de uma wallet
+        Retorna o saldo em SOL (convertido de lamports)
+        """
+        try:
+            result = await self.rpc_request('getBalance', [wallet_address])
+            if result and 'value' in result:
+                lamports = result['value']
+                # Converte lamports para SOL (1 SOL = 1,000,000,000 lamports)
+                sol_balance = lamports / 1_000_000_000
+                return sol_balance
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar saldo: {e}")
+        return 0.0
     
     async def rpc_request(self, method: str, params: list, timeout: int = 30) -> Optional[Dict]:
         """Faz requisição RPC para Solana com retry automático e rate limiting"""
@@ -251,6 +303,7 @@ class SolanaRPC:
             print(f"✅ Encontradas {len(largest_accounts)} contas de token")
             
             buyers_list = []
+            buyers_with_balance = []  # Lista com wallets e saldos
             processed_owners = set()
             
             # Calcula quantas contas processar - mais agressivo com RPC premium
@@ -339,18 +392,31 @@ class SolanaRPC:
                             else:
                                 wallet = account_key.get('pubkey', '')
                             
-                            if (wallet and len(wallet) > 30 and 
-                                wallet != mint_address and
+                            # Usa o filtro robusto para validar wallets
+                            if (wallet and 
+                                self.is_valid_user_wallet(wallet, mint_address) and
                                 wallet not in processed_owners):
                                 
+                                # Busca saldo da wallet
+                                print(f"💰 Buscando saldo para: {wallet[:8]}...")
+                                balance = await self.get_wallet_balance(wallet)
+                                
                                 buyers_list.append(wallet)
+                                buyers_with_balance.append({
+                                    'wallet': wallet,
+                                    'balance': balance,
+                                    'timestamp': block_time
+                                })
                                 processed_owners.add(wallet)
                                 
-                                print(f"✅ Wallet encontrada: {wallet[:8]}... (timestamp: {block_time})")
+                                print(f"✅ Wallet: {wallet[:8]}... Saldo: {balance:.2f} | Tempo: {block_time}")
                                 
                                 if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                                     print(f"🎯 Limite de wallets atingido!")
                                     break
+                                    
+                            elif wallet and wallet in self.SYSTEM_PROGRAMS:
+                                print(f"🔧 Programa filtrado: {wallet[:8]}... (sistema Solana)")
                         
                         if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                             break
@@ -373,11 +439,12 @@ class SolanaRPC:
             print(f"🎉 Processo concluído! Encontradas {len(buyers_list)} wallets via RPC Solana")
             print(f"📊 Total de requisições feitas: {self.request_count}")
             
-            return buyers_list, token_info
+            # Retorna tanto a lista simples quanto os dados detalhados com saldos
+            return buyers_list, token_info, buyers_with_balance
             
         except Exception as e:
             print(f"❌ Erro geral ao buscar compradores via RPC: {e}")
-            return [], {}
+            return [], {}, []
 
 # Instância global da RPC
 solana_rpc = SolanaRPC()

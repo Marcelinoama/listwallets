@@ -10,6 +10,54 @@ class SolscanAPI:
         self.base_url = SOLSCAN_API_BASE
         self.headers = SOLSCAN_HEADERS
         
+        # Endereços de programas do sistema Solana que devem ser filtrados  
+        self.SYSTEM_PROGRAMS = {
+            '11111111111111111111111111111111',  # System Program
+            'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  # Token Program  
+            'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',  # Associated Token Program
+            'ComputeBudget111111111111111111111111111111',  # Compute Budget Program
+            'SysvarRent111111111111111111111111111111111',  # Sysvar Rent
+            'SysvarC1ock11111111111111111111111111111111',  # Sysvar Clock
+            'Vote111111111111111111111111111111111111111',  # Vote Program
+            'Stake11111111111111111111111111111111111111',  # Stake Program
+            'Config1111111111111111111111111111111111111',  # Config Program
+            'BPFLoaderUpgradeab1e11111111111111111111111',  # BPF Upgradeable Loader
+        }
+    
+    def is_valid_user_wallet(self, wallet_address: str, mint_address: str) -> bool:
+        """
+        Verifica se um endereço é uma wallet de usuário válida
+        Filtra programas do sistema, endereços vazios e o próprio token
+        """
+        if not wallet_address or len(wallet_address) < 32:
+            return False
+            
+        # Filtra o próprio token
+        if wallet_address == mint_address:
+            return False
+            
+        # Filtra programas do sistema Solana
+        if wallet_address in self.SYSTEM_PROGRAMS:
+            return False
+            
+        # Filtra endereços que são claramente programas (terminam com muitos 1s)
+        if wallet_address.endswith('1' * 10):  # 10 ou mais '1's no final
+            return False
+            
+        return True
+    
+    async def get_wallet_balance(self, wallet_address: str) -> float:
+        """
+        Busca o saldo de SOL de uma wallet usando RPC
+        """
+        try:
+            # Usa o RPC Solana para buscar saldo  
+            balance = await solana_rpc.get_wallet_balance(wallet_address)
+            return balance
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar saldo via Solscan: {e}")
+            return 0.0
+        
     async def get_token_transactions(self, token_address: str, limit: int = 2000) -> List[Dict]:
         """
         Busca transações de um token específico no Solscan
@@ -83,6 +131,7 @@ class SolscanAPI:
                 
                 if transactions:
                     buyers_ordered = []  # Lista ordenada para manter sequência cronológica
+                    buyers_with_balance = []  # Lista com wallets e saldos
                     seen_wallets = set()  # Para evitar duplicatas
                     
                     for tx in transactions:
@@ -93,8 +142,8 @@ class SolscanAPI:
                                 source = tx.get('from_address', '')
                                 
                                 # Processa a wallet de destino (quem recebeu os tokens)
-                                if (dest and len(dest) > 30 and 
-                                    dest != token_address and 
+                                if (dest and 
+                                    self.is_valid_user_wallet(dest, token_address) and
                                     dest not in seen_wallets):
                                     buyers_ordered.append(dest)
                                     seen_wallets.add(dest)
@@ -102,11 +151,13 @@ class SolscanAPI:
                                     # Para quando atingir o limite configurado
                                     if len(buyers_ordered) >= MAX_WALLETS_DISPLAY:
                                         break
+                                elif dest and dest in self.SYSTEM_PROGRAMS:
+                                    print(f"🔧 Programa filtrado (dest): {dest[:20]}...")
                                 
                                 # Se ainda não atingiu o limite, processa source também
                                 if (len(buyers_ordered) < MAX_WALLETS_DISPLAY and
-                                    source and len(source) > 30 and 
-                                    source != token_address and 
+                                    source and 
+                                    self.is_valid_user_wallet(source, token_address) and
                                     source not in seen_wallets):
                                     buyers_ordered.append(source)
                                     seen_wallets.add(source)
@@ -114,6 +165,8 @@ class SolscanAPI:
                                     # Para quando atingir o limite configurado
                                     if len(buyers_ordered) >= MAX_WALLETS_DISPLAY:
                                         break
+                                elif source and source in self.SYSTEM_PROGRAMS:
+                                    print(f"🔧 Programa filtrado (source): {source[:20]}...")
                                         
                         except Exception as e:
                             print(f"Erro ao processar transação: {e}")
@@ -121,7 +174,27 @@ class SolscanAPI:
                     
                     if buyers_ordered:
                         print(f"✅ API Pro Solscan: {len(buyers_ordered)} wallets encontradas")
-                        return buyers_ordered, token_info
+                        
+                        # Busca saldos das wallets encontradas  
+                        print("💰 Buscando saldos das wallets via RPC...")
+                        buyers_with_balance = []
+                        for wallet in buyers_ordered[:min(10, len(buyers_ordered))]:  # Limita para evitar muitas requisições
+                            try:
+                                balance = await self.get_wallet_balance(wallet)
+                                buyers_with_balance.append({
+                                    'wallet': wallet,
+                                    'balance': balance,
+                                    'timestamp': 0  # Solscan não tem timestamp individual
+                                })
+                                print(f"💰 {wallet[:8]}... {balance:.2f}")
+                            except:
+                                buyers_with_balance.append({
+                                    'wallet': wallet, 
+                                    'balance': 0.0,
+                                    'timestamp': 0
+                                })
+                        
+                        return buyers_ordered, token_info, buyers_with_balance
                     
             except Exception as e:
                 print(f"❌ Erro na API Pro do Solscan: {e}")
@@ -129,16 +202,16 @@ class SolscanAPI:
         # Fallback: usar RPC direto da Solana (gratuito)
         print("🔄 Usando RPC Solana como alternativa...")
         try:
-            buyers_rpc, token_info_rpc = await solana_rpc.extract_buyers_from_mint(token_address)
+            buyers_rpc, token_info_rpc, balance_info = await solana_rpc.extract_buyers_from_mint(token_address)
             if buyers_rpc:
                 print(f"✅ RPC Solana: {len(buyers_rpc)} wallets encontradas")
-                return buyers_rpc, token_info_rpc
+                return buyers_rpc, token_info_rpc, balance_info
         except Exception as e:
             print(f"❌ Erro no RPC Solana: {e}")
         
         # Se ambos falharam
         print("❌ Nenhuma fonte de dados funcionou")
-        return [], {}
+        return [], {}, []
     
     def validate_token_address(self, address: str) -> bool:
         """
