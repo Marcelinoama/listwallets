@@ -1,0 +1,38 @@
+# Configurações do ListWallet Bot
+# ==================================
+
+# Token do bot do Telegram (obtenha no @BotFather)
+# Substitua o valor abaixo pelo seu token real
+TELEGRAM_BOT_TOKEN=SEU_TOKEN_AQUI
+
+# Exemplo de como deve ficar o token:
+# TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+
+# Número de wallets para retornar (primeiras que compraram o token)
+MAX_WALLETS_DISPLAY=50
+
+# Timeout do cache em segundos
+CACHE_TIMEOUT=300
+
+# OPCIONAL: API key do Solscan Pro (para melhor performance)
+# Se não informada, usará RPC gratuito da Solana
+# Obtenha em: https://solscan.io/apis
+SOLSCAN_PRO_API_KEY=
+
+# Configurações avançadas de RPC (otimizadas para evitar rate limiting)
+# RPC_RETRY_ATTEMPTS=2     # Tentativas por RPC (padrão: 2)
+# RPC_RETRY_DELAY=3.0      # Delay entre tentativas (padrão: 3s)  
+# RPC_REQUEST_DELAY=1.5    # Delay entre requisições (padrão: 1.5s)
+
+# RPCs customizados (adicione seus próprios endpoints Solana)
+# Serão usados como prioridade antes dos RPCs padrão
+# Formato: URLs separadas por vírgula
+CUSTOM_RPC_URLS=
+
+# Exemplo de como adicionar múltiplos RPCs:
+# CUSTOM_RPC_URLS=https://seu-rpc-1.com,https://seu-rpc-2.com,https://rpc-premium.com
+# 
+# Ou em formato mais legível (uma linha por RPC):
+# CUSTOM_RPC_URLS=https://api.mainnet-beta.solana.com,
+#                 https://solana-mainnet.quicknode.pro/seu-token/,
+#                 https://seu-rpc-premium.com

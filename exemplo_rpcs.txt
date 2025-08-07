@@ -1,0 +1,35 @@
+EXEMPLO DE CONFIGURAÇÃO DE RPCs CUSTOMIZADOS
+===========================================
+
+Para adicionar seus próprios RPCs Solana, edite o arquivo .env:
+
+🔧 FORMATO SIMPLES (uma linha):
+CUSTOM_RPC_URLS=https://rpc1.com,https://rpc2.com,https://rpc3.com
+
+🔧 FORMATO LEGÍVEL (múltiplas linhas):
+CUSTOM_RPC_URLS=https://api.mainnet-beta.solana.com,
+                https://solana-mainnet.quicknode.pro/seu-token/,
+                https://rpc.ankr.com/solana,
+                https://seu-rpc-premium.com
+
+🌐 EXEMPLOS DE RPCs POPULARES:
+- QuickNode: https://solana-mainnet.quicknode.pro/SEU_TOKEN/
+- Alchemy: https://solana-mainnet.g.alchemy.com/v2/SEU_TOKEN
+- Helius: https://mainnet.helius-rpc.com/?api-key=SEU_TOKEN
+- Ankr: https://rpc.ankr.com/solana
+- GetBlock: https://solana.getblock.io/mainnet/?api_key=SEU_TOKEN
+
+⚙️ COMO FUNCIONA:
+1. ✅ Seus RPCs são testados PRIMEIRO (prioridade)
+2. 🔄 Se falharem, usa os RPCs padrão do bot
+3. 📊 Sistema roda entre todos automaticamente
+4. ⏰ Retry inteligente com backoff exponencial
+
+🚀 BENEFÍCIOS DE USAR RPCs CUSTOMIZADOS:
+- 🎯 Rate limits maiores (RPCs pagos)
+- ⚡ Velocidade superior
+- 🛡️ Menos chance de erro 429
+- 🔒 Maior confiabilidade
+
+💡 DICA: Se você tem um RPC premium (QuickNode, Alchemy, etc), 
+coloque ele primeiro na lista para máxima performance!

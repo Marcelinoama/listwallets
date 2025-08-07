@@ -1,0 +1,100 @@
+INSTRUÇÕES RÁPIDAS DE CONFIGURAÇÃO
+====================================
+
+1. INSTALAR DEPENDÊNCIAS:
+   pip install -r requirements.txt
+
+2. CONFIGURAR TOKEN DO BOT:
+   
+   ✅ ARQUIVO .env JÁ CRIADO!
+   
+   Edite o arquivo .env e substitua:
+   TELEGRAM_BOT_TOKEN=SEU_TOKEN_AQUI
+   
+   Por seu token real, exemplo:
+   TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+
+   OU edite config.py diretamente:
+   TELEGRAM_BOT_TOKEN = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+3. EXECUTAR O BOT:
+   python start.py
+   
+   OU diretamente:
+   python bot.py
+
+4. CONFIGURAR NÚMERO DE WALLETS (opcional):
+   No arquivo .env, ajuste:
+   MAX_WALLETS_DISPLAY=50
+   
+   Este número define quantas primeiras wallets
+   que compraram o token serão retornadas.
+
+5. TESTAR O BOT:
+   - Abra o Telegram
+   - Procure seu bot pelo username
+   - Envie /start
+   - Envie um endereço de token Solana
+
+EXEMPLO DE TOKEN PARA TESTE:
+So11111111111111111111111111111111111111112 (Wrapped SOL)
+
+COMANDOS DO BOT:
+/start - Iniciar
+/help - Ajuda
+[endereço_token] - Buscar PRIMEIRAS wallets que compraram
+
+FUNCIONALIDADE PRINCIPAL:
+✅ Retorna as primeiras wallets que compraram o token
+✅ Ordem cronológica: primeiro → último comprador
+✅ Número configurável no .env (padrão: 50)
+
+FONTES DE DADOS:
+✅ API Pro Solscan (requer API key paga - mais rápida)
+✅ RPC Solana (gratuita - pode ser mais lenta)
+✅ Fallback automático entre fontes
+
+CONFIGURAÇÕES OPCIONAIS no .env:
+- SOLSCAN_PRO_API_KEY: API key do Solscan Pro
+- MAX_WALLETS_DISPLAY: Número de wallets (padrão: 50)
+- CACHE_TIMEOUT: Timeout do cache (padrão: 300s)
+
+CONFIGURAÇÕES AVANÇADAS de RPC (para resolver rate limiting):
+- CUSTOM_RPC_URLS: Seus RPCs personalizados (separados por vírgula)
+- RPC_RETRY_ATTEMPTS: Tentativas por RPC (padrão: 3)
+- RPC_RETRY_DELAY: Delay entre tentativas (padrão: 2s)
+- RPC_REQUEST_DELAY: Delay entre requisições (padrão: 0.5s)
+
+COMO ADICIONAR MÚLTIPLOS RPCs CUSTOMIZADOS:
+No arquivo .env, configure assim:
+
+CUSTOM_RPC_URLS=https://seu-rpc-1.com,https://seu-rpc-2.com,https://rpc-premium.com
+
+Ou em formato mais legível:
+CUSTOM_RPC_URLS=https://api.mainnet-beta.solana.com,
+                https://solana-mainnet.quicknode.pro/seu-token/,
+                https://seu-rpc-premium.com
+
+✅ Seus RPCs terão PRIORIDADE sobre os padrão
+✅ Sistema tenta seus RPCs primeiro, depois os padrão
+✅ Suporta quantos RPCs você quiser
+
+MELHORIAS ANTI-RATE-LIMITING:
+✅ Múltiplas URLs RPC com rotação automática
+✅ Backoff exponencial em caso de erro 429
+✅ Delays configuráveis entre requisições
+✅ Processamento limitado para evitar sobrecarregar APIs
+✅ Logging detalhado do processo
+
+ESTRUTURA FINAL:
+listwallet/
+├── bot.py                 # Bot principal do Telegram
+├── solscan_api.py        # API do Solscan + fallback  
+├── solana_rpc.py         # RPC direto da Solana (gratuito)
+├── config.py             # Configurações e URLs
+├── start.py              # Script de inicialização
+├── requirements.txt      # Dependências Python
+├── README.md             # Documentação completa
+├── exemplo_configuracao.txt # Instruções rápidas
+├── env_template          # Template de configuração
+└── .env                  # Configurações (✅ JÁ CRIADO!)

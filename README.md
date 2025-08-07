@@ -1,6 +1,6 @@
 # 🔍 ListWallet Bot - Solana Token Buyers Tracker
 
-Bot de Telegram que busca e lista as wallets que compraram um token específico na blockchain Solana usando a API do Solscan.
+Bot de Telegram que busca e lista as wallets que compraram um token específico na blockchain Solana usando múltiplas fontes de dados.
 
 ## 🚀 Funcionalidades
 
@@ -11,11 +11,57 @@ Bot de Telegram que busca e lista as wallets que compraram um token específico 
 - ✅ Validação de endereços de token
 - 🔍 Informações básicas do token
 
+## 🔄 Fontes de Dados
+
+O bot utiliza múltiplas fontes para máxima confiabilidade:
+
+### 1. **API Pro do Solscan** (Recomendada)
+- ✅ Rápida e precisa
+- ✅ Dados completos de transações
+- ❌ Requer API key paga ($199/mês+)
+- 🔗 Obtenha em: https://solscan.io/apis
+
+### 2. **RPC Solana** (Padrão/Gratuita) 
+- ✅ Totalmente gratuita
+- ✅ Acesso direto à blockchain
+- ✅ **Anti-rate-limiting**: Múltiplos endpoints com rotação
+- ✅ **Retry inteligente**: Backoff exponencial automático
+- ⚠️ Pode ser mais lenta que API Pro
+
+**O bot escolhe automaticamente a melhor fonte disponível.**
+
+## 🛡️ Sistema Anti-Rate-Limiting
+
+O bot implementa várias estratégias para evitar limitações de taxa:
+
+### 🔄 **Múltiplos Endpoints RPC**
+- 7+ servidores RPC diferentes
+- Rotação automática em caso de falha
+- Endpoints incluem: Solana oficial, Ankr, Alchemy, Helius
+
+### ⏰ **Retry Inteligente**
+- Backoff exponencial: 2s → 4s → 8s
+- Detecção específica de erro 429 (Rate Limit)
+- Até 3 tentativas por endpoint antes de trocar
+
+### 🎛️ **Configurações Personalizáveis**
+```env
+RPC_RETRY_ATTEMPTS=3      # Tentativas por endpoint
+RPC_RETRY_DELAY=2.0       # Delay base (segundos)
+RPC_REQUEST_DELAY=0.5     # Delay entre requisições
+```
+
+### 📊 **Processamento Otimizado**
+- Limites inteligentes de requisições simultâneas
+- Delays automáticos entre contas processadas
+- Logging detalhado para acompanhar o progresso
+
 ## 📋 Requisitos
 
 - Python 3.8+
 - Token de bot do Telegram (obtido no @BotFather)
 - Conexão com internet
+- (Opcional) API key do Solscan Pro para melhor performance
 
 ## 🛠️ Instalação
 
@@ -26,14 +72,18 @@ Bot de Telegram que busca e lista as wallets que compraram um token específico 
 pip install -r requirements.txt
 ```
 
-3. **Configure o token do bot:**
-   - Crie um arquivo `.env` na pasta do projeto
-   - Adicione seu token do Telegram:
-```
-TELEGRAM_BOT_TOKEN=SEU_TOKEN_AQUI
-```
+3. **Configure o bot:**
+   - Edite o arquivo `.env` (já criado) com suas configurações:
+```env
+# OBRIGATÓRIO: Token do bot do Telegram
+TELEGRAM_BOT_TOKEN=seu_token_do_botfather
 
-   **OU** edite diretamente o arquivo `config.py` e substitua `SEU_TOKEN_AQUI` pelo seu token.
+# Número de wallets a retornar (padrão: 50)
+MAX_WALLETS_DISPLAY=50
+
+# OPCIONAL: API key do Solscan Pro (para melhor performance)
+SOLSCAN_PRO_API_KEY=sua_api_key_aqui
+```
 
 4. **Execute o bot:**
 ```bash
