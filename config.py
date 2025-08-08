@@ -31,11 +31,10 @@ SOLANA_RPC_URLS = [HELIUS_RPC_URL]
 # Configurações especiais por RPC (vazio para Helius)
 RPC_CONFIGS = {}
 
-# Configurações para rate limiting (lidas do .env ou valores padrão)
-# AUMENTADOS para evitar rate limiting
-RPC_RETRY_ATTEMPTS = int(os.getenv('RPC_RETRY_ATTEMPTS', '2'))  # Reduzido de 3 para 2
-RPC_RETRY_DELAY = float(os.getenv('RPC_RETRY_DELAY', '3.0'))  # Aumentado de 2 para 3 segundos  
-RPC_REQUEST_DELAY = float(os.getenv('RPC_REQUEST_DELAY', '1.5'))  # Aumentado de 0.5 para 1.5 segundos
+# Configurações otimizadas para Helius (sem limitações de velocidade)
+RPC_RETRY_ATTEMPTS = int(os.getenv('RPC_RETRY_ATTEMPTS', '1'))  # Tentativa única - Helius é confiável
+RPC_RETRY_DELAY = float(os.getenv('RPC_RETRY_DELAY', '0.1'))  # Delay mínimo entre tentativas
+RPC_REQUEST_DELAY = float(os.getenv('RPC_REQUEST_DELAY', '0.0'))  # SEM delay entre requisições
 
 # Configurações do bot (lidas do .env ou valores padrão)
 MAX_WALLETS_DISPLAY = int(os.getenv('MAX_WALLETS_DISPLAY', '50'))  # Máximo de wallets para exibir

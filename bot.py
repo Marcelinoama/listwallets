@@ -92,7 +92,7 @@ Digite /help para mais informações.
 
 🚫 **Limitações:**
 - Performance varia conforme a fonte de dados
-- Pode haver delay em tokens muito populares
+- RPC Helius otimizado para máxima velocidade
 - Ordem baseada no timestamp das transações
 
 ❓ **Problemas comuns:**
@@ -568,7 +568,7 @@ BxrYotq7fzH5tw4k4UQyekYje8n7rhNNgRCwa5Shpump
             f"{fonte_info}\n"
             "⏳ Analisando transações na blockchain...\n"
             "⚡ **Versão otimizada** - pode levar 1-2 minutos\n"
-            "🛡️ Delays anti-rate-limiting aplicados",
+            "⚡ RPC Helius: Processamento ultra-rápido",
             parse_mode='Markdown'
         )
         

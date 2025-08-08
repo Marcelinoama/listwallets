@@ -123,13 +123,10 @@ class SolanaRPC:
                 }
                 
                 try:
-                    # Delay entre requisições para evitar rate limiting
+                    # Helius não precisa de delays - tentativa imediata
                     if retry_attempt > 0:
-                        delay = RPC_RETRY_DELAY * (2 ** retry_attempt)  # Backoff exponencial
-                        print(f"⏳ Aguardando {delay}s antes de tentar novamente...")
-                        await asyncio.sleep(delay)
-                    else:
-                        await asyncio.sleep(RPC_REQUEST_DELAY)
+                        # Delay mínimo apenas se houver retry (muito improvável com Helius)
+                        await asyncio.sleep(0.1)
                     
                     # Verifica se este RPC precisa de headers especiais (ex: Tatum)
                     headers = {}
@@ -326,7 +323,7 @@ class SolanaRPC:
             }
             
             self.request_count += 1
-            await asyncio.sleep(RPC_REQUEST_DELAY * 2)  # Delay maior
+            # Helius é rápido - sem delay
             
             account_info = await self.get_account_info(mint_address)
             if account_info and account_info.get('value'):
@@ -341,7 +338,7 @@ class SolanaRPC:
             print("🔎 Buscando maiores contas do token...")
             
             self.request_count += 1 
-            await asyncio.sleep(RPC_REQUEST_DELAY * 2)  # Delay maior
+            # Helius é rápido - sem delay
             
             largest_accounts = await self.get_token_accounts_by_mint(mint_address)
             
@@ -385,13 +382,8 @@ class SolanaRPC:
                 # Busca signatures para a conta
                 self.request_count += 1
                 
-                # Delay otimizado baseado no tipo de RPC
-                if self.is_using_premium_rpc():
-                    await asyncio.sleep(0.2)  # RPC premium: delay mínimo
-                    signatures_limit = min(100, MAX_WALLETS_DISPLAY)  # Mais signatures
-                else:
-                    await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # RPC gratuito: delay maior
-                    signatures_limit = max(10, min(50, MAX_WALLETS_DISPLAY // 2))
+                # Helius não precisa de delays - sempre máxima performance
+                signatures_limit = 100  # Helius aguenta requisições grandes
                 
                 signatures = await self.get_signatures_for_address(account_address, signatures_limit)
                 
@@ -424,11 +416,8 @@ class SolanaRPC:
                         
                         self.request_count += 1
                         
-                        # Delay otimizado para premium
-                        if self.is_using_premium_rpc():
-                            await asyncio.sleep(0.1)  # RPC premium: super rápido
-                        else:
-                            await asyncio.sleep(RPC_REQUEST_DELAY * 3)  # RPC gratuito: delay grande
+                        # Helius não precisa de delay entre transações
+                        pass  # Processamento contínuo
                         
                         # Busca detalhes da transação
                         tx_details = await self.get_transaction(signature)
@@ -489,13 +478,8 @@ class SolanaRPC:
                 if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                     break
                 
-                # Delay otimizado entre contas
-                if self.is_using_premium_rpc():
-                    print("⏳ RPC premium: delay mínimo...")
-                    await asyncio.sleep(0.3)  # Premium: delay mínimo
-                else:
-                    print("⏳ Aguardando 3s entre contas...")
-                    await asyncio.sleep(3)  # Gratuito: delay grande
+                # Helius processa tudo sem delays
+                print("⚡ Helius: processamento contínuo sem delays...")
             
             # ORDENAÇÃO CRONOLÓGICA ROBUSTA E DETERMINÍSTICA
             if buyers_with_balance:
