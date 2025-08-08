@@ -172,23 +172,18 @@ class SolscanAPI:
                                     buyers_ordered.append(dest)
                                     seen_wallets.add(dest)
                                     
-                                    # Para quando atingir o limite configurado
-                                    if len(buyers_ordered) >= MAX_WALLETS_DISPLAY:
-                                        break
+                                    # Continua buscando todas as wallets (sem limite)
                                 elif dest and dest in self.SYSTEM_PROGRAMS:
                                     print(f"🔧 Programa filtrado (dest): {dest[:20]}...")
                                 
-                                # Se ainda não atingiu o limite, processa source também
-                                if (len(buyers_ordered) < MAX_WALLETS_DISPLAY and
-                                    source and 
+                                # Processa source também (sem limite)
+                                if (source and 
                                     self.is_valid_user_wallet(source, token_address) and
                                     source not in seen_wallets):
                                     buyers_ordered.append(source)
                                     seen_wallets.add(source)
                                     
-                                    # Para quando atingir o limite configurado
-                                    if len(buyers_ordered) >= MAX_WALLETS_DISPLAY:
-                                        break
+                                    # Continua buscando todas as wallets (sem limite)
                                 elif source and source in self.SYSTEM_PROGRAMS:
                                     print(f"🔧 Programa filtrado (source): {source[:20]}...")
                                         
@@ -202,7 +197,7 @@ class SolscanAPI:
                         # Busca saldos das wallets encontradas  
                         print("💰 Buscando saldos das wallets via RPC...")
                         buyers_with_balance = []
-                        for wallet in buyers_ordered[:min(10, len(buyers_ordered))]:  # Limita para evitar muitas requisições
+                        for wallet in buyers_ordered:  # Busca saldo de todas as wallets
                             try:
                                 balance = await self.get_wallet_balance(wallet)
                                 buyers_with_balance.append({

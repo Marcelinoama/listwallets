@@ -17,6 +17,8 @@ class ListWalletBot:
         self.app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         # Armazena configurações de saldo mínimo por usuário
         self.user_min_balance = {}  # user_id -> min_balance_sol
+        # Armazena estado do comando samewallets por usuário
+        self.samewallets_waiting = {}  # user_id -> True (aguardando tokens)
         self.setup_handlers()
     
     def setup_handlers(self):
@@ -24,6 +26,7 @@ class ListWalletBot:
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("help", self.help_command))
         self.app.add_handler(CommandHandler("balance", self.balance_command))
+        self.app.add_handler(CommandHandler("samewallets", self.samewallets_command))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         self.app.add_handler(CallbackQueryHandler(self.button_callback))
     
@@ -40,6 +43,7 @@ Bem-vindo! Este bot encontra as **primeiras wallets** que compraram um token esp
 3. Receba a lista em **ordem cronológica** (primeiro → último)
 
 💰 **Filtro de saldo:** Use `/balance 2` para mostrar apenas wallets com 2+ SOL
+🔍 **Wallets comuns:** Use `/samewallets tokenA tokenB` para encontrar holders múltiplos
 
 ⚙️ **Configurável:**
 - Número de wallets configurável no arquivo .env
@@ -70,6 +74,7 @@ Digite /help para mais informações.
 - Busca as primeiras wallets que compraram o token
 - **Ordem cronológica:** do primeiro ao último comprador
 - **Filtro de saldo:** `/balance X` para mostrar apenas wallets com X+ SOL
+- **Wallets comuns:** `/samewallets` para encontrar holders de múltiplos tokens
 - Número configurável no arquivo .env (MAX_WALLETS_DISPLAY)
 - Mostra informações básicas do token
 - Fonte atual: {fonte_config}
@@ -167,9 +172,357 @@ Com `/balance 2`, apenas wallets com 2+ SOL aparecerão nos resultados.
                 parse_mode='Markdown'
             )
     
+    async def samewallets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Comando /samewallets para encontrar wallets que compraram múltiplos tokens"""
+        user_id = update.effective_user.id
+        
+        # Se há argumentos, processa no modo antigo (para compatibilidade)
+        if context.args:
+            await self.process_samewallets_tokens(update, context.args)
+            return
+        
+        # Modo interativo - solicita tokens
+        self.samewallets_waiting[user_id] = True
+        
+        help_text = """
+🔍 **Comando /samewallets - Modo Interativo**
+
+📝 **Agora envie os endereços dos tokens que você quer analisar:**
+
+**Formato:** Um token por linha
+**Exemplo:**
+```
+B1xq3paAWCZGJh39f7tfCGGZLTh8Cub8QTKUiNHkBAGS
+BxrYotq7fzH5tw4k4UQyekYje8n7rhNNgRCwa5Shpump
+```
+
+⚙️ **Instruções:**
+• Envie **2-5 tokens** (um por linha)
+• Cole cada endereço em uma mensagem separada OU
+• Cole todos os endereços de uma vez (separados por quebra de linha)
+• Digite `/cancel` para cancelar
+
+🎯 **O bot encontrará wallets que compraram TODOS os tokens listados**
+
+💡 **Aguardando seus tokens...**
+        """
+        
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+        print(f"✅ Usuário {user_id} iniciou modo interativo /samewallets")
+    
+    async def process_samewallets_tokens(self, update, tokens):
+        """Processa lista de tokens para comando samewallets"""
+        user_id = update.effective_user.id
+        
+        # Valida número de tokens
+        if len(tokens) < 2:
+            await update.message.reply_text(
+                "❌ **Erro:** Você precisa fornecer pelo menos 2 tokens.\n\n"
+                "**Use novamente:** `/samewallets`\n"
+                "**E forneça pelo menos 2 endereços**",
+                parse_mode='Markdown'
+            )
+            return
+        
+        if len(tokens) > 5:
+            await update.message.reply_text(
+                "❌ **Erro:** Máximo de 5 tokens por consulta.\n\n"
+                "**Use novamente:** `/samewallets`\n"
+                "**E forneça no máximo 5 endereços**",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Valida cada token
+        invalid_tokens = []
+        for i, token in enumerate(tokens, 1):
+            if not solscan_api.validate_token_address(token):
+                invalid_tokens.append(f"Token {i}: {token[:20]}...")
+        
+        if invalid_tokens:
+            error_msg = "❌ **Tokens inválidos encontrados:**\n\n"
+            for invalid in invalid_tokens:
+                error_msg += f"• {invalid}\n"
+            error_msg += "\n💡 Verifique os endereços e use `/samewallets` novamente."
+            
+            await update.message.reply_text(error_msg, parse_mode='Markdown')
+            return
+        
+        # Inicia processamento
+        processing_msg = await update.message.reply_text(
+            f"🔍 **Buscando wallets comuns...**\n\n"
+            f"🎯 **Tokens a analisar:** {len(tokens)}\n"
+            f"📊 **Processando:** 1/{len(tokens)} tokens...\n"
+            f"⏳ **Estimativa:** {len(tokens) * 30}-{len(tokens) * 60} segundos\n"
+            f"🔄 **Aguarde o processamento completo...**",
+            parse_mode='Markdown'
+        )
+        
+        try:
+            print(f"🔍 Iniciando busca de wallets comuns para {len(tokens)} tokens")
+            
+            # Busca wallets para cada token
+            all_wallets_data = {}
+            token_names = {}
+            
+            for i, token in enumerate(tokens, 1):
+                try:
+                    # Atualiza progresso
+                    await processing_msg.edit_text(
+                        f"🔍 **Buscando wallets comuns...**\n\n"
+                        f"🎯 **Tokens a analisar:** {len(tokens)}\n"
+                        f"📊 **Processando:** {i}/{len(tokens)} tokens...\n"
+                        f"🔄 **Token atual:** {token[:8]}...\n"
+                        f"⏳ **Aguarde o processamento...**",
+                        parse_mode='Markdown'
+                    )
+                    
+                    print(f"📊 Processando token {i}/{len(tokens)}: {token}")
+                    
+                    # Busca wallets do token
+                    buyers, token_info, balance_info = await solscan_api.extract_buyers(token)
+                    
+                    if not buyers:
+                        await processing_msg.edit_text(
+                            f"❌ **Token sem wallets encontradas**\n\n"
+                            f"🎯 **Token:** {token[:8]}...\n"
+                            f"📊 **Posição:** {i}/{len(tokens)}\n\n"
+                            f"💡 **Possíveis motivos:**\n"
+                            f"• Token muito novo\n"
+                            f"• Token sem holders\n"
+                            f"• Problema temporário de rede",
+                            parse_mode='Markdown'
+                        )
+                        return
+                    
+                    # Armazena dados
+                    token_name = token_info.get('name', f'Token {i}')
+                    token_symbol = token_info.get('symbol', 'N/A')
+                    token_names[token] = f"{token_name} ({token_symbol})"
+                    
+                    # Converte para set para interseção rápida
+                    all_wallets_data[token] = set(buyers)
+                    
+                    print(f"✅ Token {i}: {len(buyers)} wallets encontradas - {token_name}")
+                    
+                except Exception as e:
+                    print(f"❌ Erro ao processar token {token}: {e}")
+                    await processing_msg.edit_text(
+                        f"❌ **Erro ao processar token**\n\n"
+                        f"🎯 **Token:** {token[:8]}...\n"
+                        f"📊 **Posição:** {i}/{len(tokens)}\n\n"
+                        f"💡 **Tente usar `/samewallets` novamente**",
+                        parse_mode='Markdown'
+                    )
+                    return
+            
+            # Encontra interseção (wallets comuns)
+            print("🔍 Calculando interseção de wallets...")
+            
+            await processing_msg.edit_text(
+                f"🔍 **Calculando wallets comuns...**\n\n"
+                f"✅ **Todos os tokens processados**\n"
+                f"🧮 **Calculando interseção...**\n"
+                f"⏳ **Finalizando análise...**",
+                parse_mode='Markdown'
+            )
+            
+            # Começa com wallets do primeiro token
+            common_wallets = all_wallets_data[tokens[0]]
+            
+            # Faz interseção com cada token subsequente
+            for token in tokens[1:]:
+                common_wallets = common_wallets.intersection(all_wallets_data[token])
+            
+            # Converte de volta para lista
+            common_wallets_list = list(common_wallets)
+            
+            print(f"📊 Interseção calculada: {len(common_wallets_list)} wallets comuns")
+            
+            # Comando samewallets não aplica filtro de saldo
+            print(f"📊 Wallets comuns encontradas: {len(common_wallets_list)}")
+            print("ℹ️ Comando /samewallets ignora filtros de saldo")
+            
+            # Envia resultados
+            await self.send_samewallets_results(
+                update, processing_msg, tokens, token_names, 
+                common_wallets_list, all_wallets_data
+            )
+            
+        except Exception as e:
+            print(f"❌ Erro geral no comando samewallets: {e}")
+            await processing_msg.edit_text(
+                f"❌ **Erro durante processamento**\n\n"
+                f"🔧 **Detalhes:** {str(e)[:100]}...\n\n"
+                f"💡 **Use `/samewallets` para tentar novamente**",
+                parse_mode='Markdown'
+            )
+    
+    async def send_samewallets_results(self, update, processing_msg, tokens, token_names, common_wallets, all_wallets_data):
+        """Envia resultados do comando /samewallets"""
+        
+        if not common_wallets:
+            # Nenhuma wallet comum encontrada
+            error_text = "⚠️ **Nenhuma wallet comum encontrada**\n\n"
+            
+            error_text += "📊 **Resumo da análise:**\n"
+            for i, token in enumerate(tokens, 1):
+                token_name = token_names.get(token, f"Token {i}")
+                wallet_count = len(all_wallets_data.get(token, set()))
+                error_text += f"• {token_name}: {wallet_count} wallets\n"
+            
+            error_text += f"\n🔍 **Interseção:** 0 wallets comuns\n\n"
+            
+            error_text += f"💡 **Possíveis razões:**\n"
+            error_text += f"• Tokens têm públicos diferentes\n"
+            error_text += f"• Tokens muito específicos/nichados\n"
+            error_text += f"• Poucos holders em comum\n"
+            error_text += f"• Tokens com poucos compradores\n\n"
+            
+            error_text += f"🔧 **Sugestões:**\n"
+            error_text += f"• Tente tokens mais populares\n"
+            error_text += f"• Analise tokens relacionados\n"
+            error_text += f"• Verifique se os tokens têm atividade recente"
+            
+            try:
+                await processing_msg.edit_text(error_text, parse_mode='Markdown')
+            except:
+                await processing_msg.edit_text(
+                    f"⚠️ NENHUMA WALLET COMUM ENCONTRADA\n\n"
+                    f"Os tokens analisados não têm wallets em comum.\n"
+                    f"Tente tokens mais populares ou relacionados."
+                )
+            return
+        
+        # Monta texto com resultados
+        result_text = f"✅ **Análise de Wallets Comuns Concluída**\n\n"
+        
+        # Lista tokens analisados
+        result_text += f"🎯 **Tokens analisados:**\n"
+        for i, token in enumerate(tokens, 1):
+            token_name = token_names.get(token, f"Token {i}")
+            wallet_count = len(all_wallets_data.get(token, set()))
+            result_text += f"{i}. {token_name}: {wallet_count} wallets\n"
+        
+        result_text += f"\n🔍 **Wallets comuns encontradas:** {len(common_wallets)}\n"
+        result_text += f"📊 **Critério:** Compraram **TODOS** os {len(tokens)} tokens\n\n"
+        
+        # Mostra TODAS as wallets comuns (sem limite)
+        result_text += f"💰 **WALLETS QUE COMPRARAM TODOS OS TOKENS:**\n\n```\n"
+        
+        for i, wallet in enumerate(common_wallets, 1):
+            result_text += f"{i:2d}. {wallet}\n"
+        
+        result_text += "```\n"
+        
+        # Estatísticas
+        if len(tokens) == 2:
+            overlap_rate = (len(common_wallets) / min(len(all_wallets_data[tokens[0]]), len(all_wallets_data[tokens[1]]))) * 100
+            result_text += f"\n📈 **Taxa de sobreposição:** {overlap_rate:.1f}%"
+        
+        # Envia resultado
+        try:
+            await processing_msg.edit_text(result_text, parse_mode='Markdown')
+            print(f"✅ Resultados enviados: {len(common_wallets)} wallets comuns")
+        except Exception as e:
+            # Fallback sem Markdown
+            simple_text = f"ANALISE DE WALLETS COMUNS CONCLUIDA\n\n"
+            simple_text += f"Tokens analisados: {len(tokens)}\n"
+            simple_text += f"Wallets comuns: {len(common_wallets)}\n\n"
+            simple_text += f"WALLETS QUE COMPRARAM TODOS OS TOKENS:\n\n"
+            
+            for i, wallet in enumerate(common_wallets, 1):
+                simple_text += f"{i:2d}. {wallet}\n"
+            
+            try:
+                await processing_msg.edit_text(simple_text)
+                print("✅ Resultados enviados (fallback)")
+            except Exception as e2:
+                print(f"❌ Erro ao enviar resultados: {e2}")
+    
+    async def process_interactive_samewallets(self, update, user_input):
+        """Processa tokens fornecidos no modo interativo do samewallets"""
+        user_id = update.effective_user.id
+        
+        # Remove usuário do modo de espera
+        if user_id in self.samewallets_waiting:
+            del self.samewallets_waiting[user_id]
+        
+        # Processa entrada - pode ser múltiplas linhas ou tokens separados
+        lines = user_input.strip().split('\n')
+        tokens = []
+        
+        # Extrai tokens válidos de todas as linhas
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('/'):
+                # Pode ter múltiplos tokens separados por espaço na mesma linha
+                line_tokens = line.split()
+                tokens.extend(line_tokens)
+        
+        # Remove duplicatas mantendo ordem
+        seen = set()
+        unique_tokens = []
+        for token in tokens:
+            if token not in seen:
+                seen.add(token)
+                unique_tokens.append(token)
+        
+        tokens = unique_tokens
+        
+        print(f"📝 Usuário {user_id} forneceu {len(tokens)} tokens: {[t[:8]+'...' for t in tokens]}")
+        
+        # Valida se forneceu tokens
+        if not tokens:
+            await update.message.reply_text(
+                "❌ **Nenhum token válido encontrado**\n\n"
+                "📝 **Formato esperado:**\n"
+                "```\n"
+                "B1xq3paAWCZGJh39f7tfCGGZLTh8Cub8QTKUiNHkBAGS\n"
+                "BxrYotq7fzH5tw4k4UQyekYje8n7rhNNgRCwa5Shpump\n"
+                "```\n\n"
+                "💡 Use `/samewallets` para tentar novamente.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Confirma tokens recebidos
+        confirm_text = f"✅ **Tokens recebidos: {len(tokens)}**\n\n"
+        confirm_text += f"📋 **Lista de tokens a analisar:**\n"
+        
+        for i, token in enumerate(tokens[:5], 1):  # Mostra até 5
+            confirm_text += f"{i}. `{token[:8]}...{token[-8:]}`\n"
+        
+        if len(tokens) > 5:
+            confirm_text += f"... e mais {len(tokens) - 5} tokens\n"
+        
+        confirm_text += f"\n🔍 **Iniciando busca de wallets comuns...**"
+        
+        confirmation_msg = await update.message.reply_text(confirm_text, parse_mode='Markdown')
+        
+        # Processa os tokens
+        await self.process_samewallets_tokens(update, tokens)
+    
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Processa mensagens de texto (endereços de token)"""
         user_input = update.message.text.strip()
+        user_id = update.effective_user.id
+        
+        # Verifica se usuário está no modo interativo samewallets
+        if user_id in self.samewallets_waiting:
+            # Comando cancel
+            if user_input.lower() in ['/cancel', 'cancel', 'cancelar']:
+                del self.samewallets_waiting[user_id]
+                await update.message.reply_text(
+                    "❌ **Comando /samewallets cancelado**\n\n"
+                    "💡 Use `/samewallets` novamente quando quiser analisar wallets comuns.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Processa tokens fornecidos
+            await self.process_interactive_samewallets(update, user_input)
+            return
         
         # Valida se parece com um endereço de token
         if not solscan_api.validate_token_address(user_input):

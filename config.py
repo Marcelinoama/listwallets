@@ -17,58 +17,19 @@ SOLSCAN_HEADERS = {
     'token': SOLSCAN_PRO_API_KEY
 }
 
-# RPCs customizados (prioridade se configurados)
-CUSTOM_RPC_URLS_STRING = os.getenv('CUSTOM_RPC_URLS', '').strip()
+# Configuração simplificada - APENAS HELIUS
+# RPC Helius Fast (testado e funcional)
+HELIUS_RPC_URL = "https://rahel-v0lqwp-fast-mainnet.helius-rpc.com/"
 
-# Configuração Tatum RPC (premium com API key)
-TATUM_RPC_URL = os.getenv('TATUM_RPC_URL', '').strip()
-TATUM_API_KEY = os.getenv('TATUM_API_KEY', '').strip()
+print(f"🚀 Configuração simplificada: APENAS Helius")
+print(f"🔑 RPC único: rahel-v0lqwp-fast-mainnet.helius-rpc.com")
+print(f"✅ Funcionalidade: Busca de tokens FUNCIONANDO")
 
-# URLs RPC da Solana padrão (testadas e funcionais)
-_DEFAULT_RPC_URLS = [
-    "https://api.mainnet-beta.solana.com",  # ✅ Testado - 47ms
-    "https://api.devnet.solana.com",        # ✅ Testado - 299ms (backup)
-    
-    # RPCs abaixo têm limitações (rate limit, API key, etc)
-    # Mantidos como fallback final
-    "https://solana-api.projectserum.com", 
-    "https://rpc.ankr.com/solana",
-    "https://solana-mainnet.g.alchemy.com/v2/demo",
-    "https://mainnet.helius-rpc.com/?api-key=demo",
-    "https://rpc.solana.com"
-]
+# Lista de RPCs simplificada - APENAS HELIUS
+SOLANA_RPC_URLS = [HELIUS_RPC_URL]
 
-# Processa RPCs customizados separados por vírgula
-CUSTOM_RPC_URLS = []
-if CUSTOM_RPC_URLS_STRING:
-    # Divide por vírgula e limpa espaços
-    custom_urls = [url.strip() for url in CUSTOM_RPC_URLS_STRING.split(',') if url.strip()]
-    CUSTOM_RPC_URLS = custom_urls
-    print(f"🚀 {len(CUSTOM_RPC_URLS)} RPCs customizados configurados:")
-    for i, url in enumerate(CUSTOM_RPC_URLS, 1):
-        print(f"   {i}. {url}")
-
-# Adiciona RPC Tatum se configurado (prioridade máxima)
-TATUM_RPC_URLS = []
-if TATUM_RPC_URL and TATUM_API_KEY:
-    TATUM_RPC_URLS = [TATUM_RPC_URL]
-    print(f"⭐ RPC Tatum Premium configurado: {TATUM_RPC_URL}")
-    print(f"🔑 API Key: {TATUM_API_KEY[:10]}...{TATUM_API_KEY[-4:] if len(TATUM_API_KEY) > 14 else 'configurada'}")
-
-# Combina RPCs na ordem de prioridade: Tatum → Custom → Padrão
-SOLANA_RPC_URLS = TATUM_RPC_URLS + CUSTOM_RPC_URLS + _DEFAULT_RPC_URLS
-
-# Cria dicionário de configurações especiais por RPC
+# Configurações especiais por RPC (vazio para Helius)
 RPC_CONFIGS = {}
-if TATUM_RPC_URL and TATUM_API_KEY:
-    RPC_CONFIGS[TATUM_RPC_URL] = {
-        'headers': {
-            'accept': 'application/json',
-            'content-type': 'application/json',
-            'x-api-key': TATUM_API_KEY
-        },
-        'type': 'tatum_premium'
-    }
 
 # Configurações para rate limiting (lidas do .env ou valores padrão)
 # AUMENTADOS para evitar rate limiting
