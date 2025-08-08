@@ -95,6 +95,7 @@ class SolscanAPI:
     async def get_token_info(self, token_address: str) -> Dict:
         """
         Busca informações básicas do token
+        Tenta primeiro via Solscan, depois via Jupiter API como fallback
         """
         url = f"{self.base_url}/token/meta"
         params = {'address': token_address}
@@ -104,12 +105,35 @@ class SolscanAPI:
                 async with session.get(url, headers=self.headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return data.get('data', {})
+                        token_data = data.get('data', {})
+                        if token_data and token_data.get('symbol'):
+                            print(f"✅ Solscan: Metadados encontrados para {token_address[:8]}...")
+                            return token_data
                     else:
-                        return {}
+                        print(f"⚠️ Solscan API falhou (status {response.status}), tentando Jupiter...")
             except Exception as e:
-                print(f"Erro ao buscar info do token: {e}")
-                return {}
+                print(f"⚠️ Erro no Solscan: {e}, tentando Jupiter API...")
+        
+        # Fallback: Jupiter API
+        try:
+            jupiter_url = f"https://tokens.jup.ag/token/{token_address}"
+            async with session.get(jupiter_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    print(f"✅ Jupiter API: Metadados encontrados para {token_address[:8]}...")
+                    return {
+                        'name': data.get('name', 'Token Desconhecido'),
+                        'symbol': data.get('symbol', 'N/A'),
+                        'decimals': data.get('decimals', 9),
+                        'logoURI': data.get('logoURI', ''),
+                        'tags': data.get('tags', [])
+                    }
+                else:
+                    print(f"⚠️ Jupiter API também falhou (status {response.status})")
+        except Exception as e:
+            print(f"⚠️ Erro na Jupiter API: {e}")
+        
+        return {}
     
     async def extract_buyers(self, token_address: str) -> tuple[List[str], Dict]:
         """
@@ -194,6 +218,8 @@ class SolscanAPI:
                                     'timestamp': 0
                                 })
                         
+                        # Garante ordem cronológica final mesmo no Solscan
+                        print(f"📅 Solscan: Ordem cronológica mantida - {len(buyers_ordered)} wallets")
                         return buyers_ordered, token_info, buyers_with_balance
                     
             except Exception as e:

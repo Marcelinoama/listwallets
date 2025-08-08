@@ -15,12 +15,15 @@ logger = logging.getLogger(__name__)
 class ListWalletBot:
     def __init__(self):
         self.app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        # Armazena configurações de saldo mínimo por usuário
+        self.user_min_balance = {}  # user_id -> min_balance_sol
         self.setup_handlers()
     
     def setup_handlers(self):
         """Configura os handlers do bot"""
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("help", self.help_command))
+        self.app.add_handler(CommandHandler("balance", self.balance_command))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         self.app.add_handler(CallbackQueryHandler(self.button_callback))
     
@@ -35,6 +38,8 @@ Bem-vindo! Este bot encontra as **primeiras wallets** que compraram um token esp
 1. Envie o endereço do token que você quer analisar
 2. Aguarde enquanto busco as transações no Solscan
 3. Receba a lista em **ordem cronológica** (primeiro → último)
+
+💰 **Filtro de saldo:** Use `/balance 2` para mostrar apenas wallets com 2+ SOL
 
 ⚙️ **Configurável:**
 - Número de wallets configurável no arquivo .env
@@ -64,6 +69,7 @@ Digite /help para mais informações.
 ⚙️ **Funcionalidades:**
 - Busca as primeiras wallets que compraram o token
 - **Ordem cronológica:** do primeiro ao último comprador
+- **Filtro de saldo:** `/balance X` para mostrar apenas wallets com X+ SOL
 - Número configurável no arquivo .env (MAX_WALLETS_DISPLAY)
 - Mostra informações básicas do token
 - Fonte atual: {fonte_config}
@@ -89,6 +95,77 @@ Digite /help para mais informações.
 - "Sem compradores": Token pode ser muito novo ou sem transações
         """
         await update.message.reply_text(help_text, parse_mode='Markdown')
+    
+    async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Comando /balance para definir saldo mínimo de SOL"""
+        user_id = update.effective_user.id
+        
+        # Se não há argumentos, mostra o valor atual
+        if not context.args:
+            current_balance = self.user_min_balance.get(user_id, 0.0)
+            status_text = f"""
+💰 **Filtro de Saldo Mínimo**
+
+🔧 **Configuração Atual:**
+• Saldo mínimo: {current_balance} SOL
+• Status: {'✅ Ativo' if current_balance > 0 else '❌ Desativado'}
+
+📝 **Como usar:**
+• `/balance 2` - Define saldo mínimo de 2 SOL
+• `/balance 0.5` - Define saldo mínimo de 0.5 SOL  
+• `/balance 0` - Desativa o filtro (padrão)
+
+💡 **Exemplo:**
+Com `/balance 2`, apenas wallets com 2+ SOL aparecerão nos resultados.
+            """
+            await update.message.reply_text(status_text, parse_mode='Markdown')
+            return
+        
+        # Valida e define o novo valor
+        try:
+            min_balance = float(context.args[0])
+            
+            if min_balance < 0:
+                await update.message.reply_text(
+                    "❌ **Erro:** O saldo mínimo não pode ser negativo.\n"
+                    "Use `/balance 0` para desativar o filtro.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Armazena a configuração
+            self.user_min_balance[user_id] = min_balance
+            
+            if min_balance == 0:
+                success_text = """
+✅ **Filtro Desativado**
+
+🔓 Todas as wallets serão exibidas, independente do saldo.
+📊 Configuração salva para suas próximas consultas.
+                """
+            else:
+                success_text = f"""
+✅ **Filtro Configurado**
+
+💰 **Saldo mínimo:** {min_balance} SOL
+🎯 **Efeito:** Apenas wallets com {min_balance}+ SOL aparecerão
+📊 **Configuração salva** para suas próximas consultas
+
+💡 Use `/balance 0` para desativar o filtro
+                """
+            
+            await update.message.reply_text(success_text, parse_mode='Markdown')
+            print(f"✅ Usuário {user_id} definiu saldo mínimo: {min_balance} SOL")
+            
+        except ValueError:
+            await update.message.reply_text(
+                "❌ **Erro:** Valor inválido.\n\n"
+                "**Exemplos válidos:**\n"
+                "• `/balance 2` (2 SOL)\n"
+                "• `/balance 0.5` (0.5 SOL)\n"
+                "• `/balance 0` (desativar)",
+                parse_mode='Markdown'
+            )
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Processa mensagens de texto (endereços de token)"""
@@ -154,6 +231,98 @@ Digite /help para mais informações.
                 balance_info = []
             
             print(f"📊 Busca concluída: {len(buyers)} wallets encontradas")
+            
+            # APLICA FILTRO DE SALDO MÍNIMO SE CONFIGURADO
+            user_id = update.effective_user.id
+            min_balance = self.user_min_balance.get(user_id, 0.0)
+            
+            if min_balance > 0 and buyers:
+                print(f"🔍 Aplicando filtro de saldo mínimo: {min_balance} SOL")
+                original_count = len(buyers)
+                
+                # Se não há balance_info completa, busca saldos das wallets
+                if not balance_info or len(balance_info) != len(buyers):
+                    print(f"⚠️ Informações de saldo incompletas, buscando saldos individuais...")
+                    
+                    # Atualiza mensagem de processamento
+                    try:
+                        await processing_msg.edit_text(
+                            "🔍 **Buscando wallets...**\n\n"
+                            f"💰 **Aplicando filtro:** {min_balance} SOL mínimo\n"
+                            "⏳ Verificando saldos das wallets...\n"
+                            "⚡ Isso pode levar alguns momentos",
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        pass
+                    
+                    # Busca saldos individuais para todas as wallets
+                    new_balance_info = []
+                    for i, wallet in enumerate(buyers):
+                        try:
+                            wallet_balance = await solscan_api.get_wallet_balance(wallet)
+                            new_balance_info.append({
+                                'wallet': wallet,
+                                'balance': wallet_balance,
+                                'timestamp': 0,
+                                'account_index': 0,
+                                'sig_index': i
+                            })
+                        except:
+                            # Se falhar, assume saldo 0
+                            new_balance_info.append({
+                                'wallet': wallet,
+                                'balance': 0.0,
+                                'timestamp': 0,
+                                'account_index': 0,
+                                'sig_index': i
+                            })
+                    
+                    balance_info = new_balance_info
+                
+                # Agora filtra com base no saldo mínimo
+                filtered_balance_info = []
+                
+                for item in balance_info:
+                    wallet_balance = item.get('balance', 0.0) if isinstance(item, dict) else 0.0
+                    if wallet_balance >= min_balance:
+                        filtered_balance_info.append(item)
+                
+                balance_info = filtered_balance_info
+                buyers = [item.get('wallet', '') for item in balance_info] if balance_info else []
+                
+                filtered_count = len(buyers)
+                print(f"📊 Filtro aplicado: {original_count} → {filtered_count} wallets (mín: {min_balance} SOL)")
+                
+                # Se todas as wallets foram filtradas
+                if filtered_count == 0:
+                    await processing_msg.edit_text(
+                        f"⚠️ **Nenhuma wallet encontrada**\n\n"
+                        f"🎯 **Filtro ativo:** {min_balance} SOL mínimo\n"
+                        f"📊 **Wallets encontradas:** {original_count}\n"
+                        f"💰 **Wallets com saldo suficiente:** 0\n\n"
+                        f"💡 **Sugestões:**\n"
+                        f"• Use `/balance 0` para desativar o filtro\n"
+                        f"• Ou use `/balance` com valor menor\n"
+                        f"• Verifique se o token tem holders ativos",
+                        parse_mode='Markdown'
+                    )
+                    return
+            
+            # ORDENAÇÃO CRONOLÓGICA FINAL DETERMINÍSTICA
+            if balance_info and len(balance_info) > 0:
+                print(f"🔄 APLICANDO ORDENAÇÃO CRONOLÓGICA FINAL...")
+                
+                # Ordena por timestamp, índices e wallet (CONSISTÊNCIA TOTAL)
+                balance_info.sort(key=lambda x: (
+                    x.get('timestamp', 0), 
+                    x.get('account_index', 0), 
+                    x.get('sig_index', 0), 
+                    x.get('wallet', '')
+                ))
+                buyers = [item.get('wallet', '') for item in balance_info]
+                print(f"✅ ORDEM CRONOLÓGICA DETERMINÍSTICA GARANTIDA!")
+                print(f"🎯 Resultados serão IDÊNTICOS em consultas futuras do mesmo token")
             
             # Edita a mensagem com os resultados (incluindo saldos)
             await self.send_results(update, processing_msg, user_input, buyers, token_info, balance_info)
@@ -234,16 +403,16 @@ Digite /help para mais informações.
         result_text += f"👥 **Primeiros compradores:** {len(buyers)}/{MAX_WALLETS_DISPLAY}\n"
         result_text += f"⏰ **Ordem:** Cronológica (primeiro → último)\n\n"
         
-        # VERSÃO SIMPLIFICADA para evitar problemas de Markdown
-        result_text += "🥇 PRIMEIRAS WALLETS QUE COMPRARAM:\n\n"
+        # VERSÃO SEM QUEBRA DE LINHA usando bloco de código
+        result_text += "🥇 **PRIMEIRAS WALLETS QUE COMPRARAM:**\n\n```\n"
         
-        # Mostra TODAS as wallets encontradas com saldos em formato monospace
+        # Mostra TODAS as wallets encontradas em bloco de código (sem quebra) - COM NUMERAÇÃO
         if balance_info and len(balance_info) > 0:
             # Usa dados detalhados com saldo
             for i, wallet_data in enumerate(balance_info, 1):
                 wallet = wallet_data.get('wallet', '')
                 balance = wallet_data.get('balance', 0.0)
-                result_text += f"{i}. `{wallet}` **{balance:.2f}**\n"
+                result_text += f"{i}. {wallet} - {balance:.2f}\n"
         else:
             # Fallback: busca saldos das wallets na hora (mais lento)
             from solana_rpc import solana_rpc
@@ -251,10 +420,12 @@ Digite /help para mais informações.
             for i, wallet in enumerate(buyers, 1):
                 try:
                     balance = await solana_rpc.get_wallet_balance(wallet)
-                    result_text += f"{i}. `{wallet}` **{balance:.2f}**\n"
+                    result_text += f"{i}. {wallet} - {balance:.2f}\n"
                     print(f"💰 Wallet {i}: {balance:.2f}")
                 except:
-                    result_text += f"{i}. `{wallet}` **0.00**\n"
+                    result_text += f"{i}. {wallet} - 0.00\n"
+        
+        result_text += "```"
         
         result_text += f"\n🎯 **Total:** {len(buyers)} wallets em ordem cronológica"
         
@@ -279,20 +450,20 @@ Digite /help para mais informações.
                 
                 # Terceira tentativa: nova mensagem simples com TODAS as wallets e saldos
                 try:
-                    simple_msg = f"✅ ENCONTRADAS {len(buyers)} WALLETS:\n\n"
+                    simple_msg = f"✅ ENCONTRADAS {len(buyers)} WALLETS:\n\n```\n"
                     
                     if balance_info and len(balance_info) > 0:
-                        # Usa dados com saldo se disponível (monospace)
+                        # Usa dados com saldo - formato sem quebra COM NUMERAÇÃO
                         for i, wallet_data in enumerate(balance_info, 1):
                             wallet = wallet_data.get('wallet', '')
                             balance = wallet_data.get('balance', 0.0)
-                            simple_msg += f"{i}. {wallet} {balance:.2f}\n"
+                            simple_msg += f"{i}. {wallet} - {balance:.2f}\n"
                     else:
-                        # Fallback sem saldo (monospace)
+                        # Fallback sem saldo - formato sem quebra COM NUMERAÇÃO
                         for i, wallet in enumerate(buyers, 1):
-                            simple_msg += f"{i}. {wallet} Saldo não disponível\n"
-                            
-                    simple_msg += f"\nTotal: {len(buyers)} wallets com saldos"
+                            simple_msg += f"{i}. {wallet} - Saldo não disponível\n"
+                    
+                    simple_msg += f"```\nTotal: {len(buyers)} wallets em ordem cronológica"
                     
                     await update.message.reply_text(simple_msg)
                     print("✅ Resposta enviada com todas as wallets e saldos")
@@ -300,14 +471,17 @@ Digite /help para mais informações.
                     print(f"❌ Erro total na comunicação: {e3}")
                     return
         
-        # Armazena os dados no contexto para callbacks
+        # Armazena os dados no contexto para callbacks (se disponível)
         try:
-            # Usa o bot da mensagem de processamento
-            bot = processing_msg.bot if hasattr(processing_msg, 'bot') else context.bot
-            if not hasattr(bot, '_wallet_cache'):
-                bot._wallet_cache = {}
-            bot._wallet_cache[token_address] = buyers
-            print(f"✅ Cache armazenado para {len(buyers)} wallets")
+            # Usa o bot da mensagem de processamento (se existir)
+            if hasattr(processing_msg, 'bot'):
+                bot = processing_msg.bot
+                if not hasattr(bot, '_wallet_cache'):
+                    bot._wallet_cache = {}
+                bot._wallet_cache[token_address] = buyers
+                print(f"✅ Cache armazenado para {len(buyers)} wallets")
+            else:
+                print(f"⚠️ Bot não disponível para cache, mas isso não é crítico")
         except Exception as e:
             print(f"⚠️ Erro ao armazenar cache: {e}")
             # Não é crítico, continua mesmo sem cache

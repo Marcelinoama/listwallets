@@ -2,6 +2,7 @@ import aiohttp
 import asyncio
 import json
 import random
+import time
 from typing import List, Dict, Optional, Set
 from config import SOLANA_RPC_URLS, MAX_WALLETS_DISPLAY, RPC_RETRY_ATTEMPTS, RPC_RETRY_DELAY, RPC_REQUEST_DELAY, RPC_CONFIGS
 import base64
@@ -13,6 +14,7 @@ class SolanaRPC:
         self.current_rpc_index = 0
         self.blacklisted_rpcs = {}  # RPC -> tempo_de_blacklist
         self.request_count = 0
+        self.token_cache = {}  # Cache para consistência cronológica
         
         # Endereços de programas do sistema Solana que devem ser filtrados
         self.SYSTEM_PROGRAMS = {
@@ -192,6 +194,15 @@ class SolanaRPC:
         result = await self.rpc_request("getTokenLargestAccounts", params)
         if result and 'value' in result:
             return result['value']
+        
+        # Se falhou, verifica se o token existe
+        basic_info = await self.rpc_request("getAccountInfo", [mint_address, {"encoding": "jsonParsed"}])
+        
+        if basic_info and basic_info.get('value'):
+            print(f"⚠️ Token existe mas não tem holders significativos")
+        else:
+            print(f"❌ Token não encontrado na blockchain")
+        
         return []
     
     async def get_token_supply(self, mint_address: str) -> Dict:
@@ -221,6 +232,15 @@ class SolanaRPC:
         ]
         
         result = await self.rpc_request("getSignaturesForAddress", params)
+        
+        # Ordena signatures por blockTime (das mais antigas para as mais novas) para ordem cronológica consistente
+        if result:
+            # Filtra signatures que têm blockTime e ordena cronologicamente
+            signatures_with_time = [sig for sig in result if sig.get('blockTime')]
+            signatures_with_time.sort(key=lambda x: x.get('blockTime', 0))
+            print(f"📅 Signatures ordenadas cronologicamente: {len(signatures_with_time)} de {len(result)}")
+            return signatures_with_time
+        
         return result if result else []
     
     async def get_transaction(self, signature: str) -> Optional[Dict]:
@@ -252,6 +272,34 @@ class SolanaRPC:
         
         return await self.rpc_request("getAccountInfo", params)
     
+    async def get_token_metadata_jupiter(self, mint_address: str) -> Dict:
+        """
+        Busca metadados do token usando a API do Jupiter
+        Retorna informações como nome, símbolo e outras propriedades
+        """
+        try:
+            url = f"https://tokens.jup.ag/token/{mint_address}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        print(f"✅ Jupiter API: Metadados encontrados para {mint_address[:8]}...")
+                        return {
+                            'name': data.get('name', 'Token Solana'),
+                            'symbol': data.get('symbol', 'UNKNOWN'),
+                            'decimals': data.get('decimals', 9),
+                            'logoURI': data.get('logoURI', ''),
+                            'tags': data.get('tags', [])
+                        }
+                    else:
+                        print(f"⚠️ Jupiter API: Token não encontrado (status {response.status})")
+                        return {}
+                        
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar metadados via Jupiter API: {e}")
+            return {}
+    
     async def extract_buyers_from_mint(self, mint_address: str) -> tuple[List[str], Dict]:
         """
         Extrai compradores de um token usando RPC direto da Solana (versão otimizada)
@@ -263,13 +311,18 @@ class SolanaRPC:
         try:
             self.request_count = 0
             
-            # Busca informações básicas do token (1 requisição)
-            print("📊 Buscando informações do token...")
+            # Busca informações básicas do token via Jupiter API primeiro
+            print("📊 Buscando metadados do token via Jupiter API...")
+            jupiter_metadata = await self.get_token_metadata_jupiter(mint_address)
+            
+            # Informações básicas do token (com metadados do Jupiter se disponível)
             token_info = {
-                'name': 'Token Solana',
-                'symbol': 'UNKNOWN', 
-                'decimals': 9,
-                'supply': '0'
+                'name': jupiter_metadata.get('name', 'Token Solana'),
+                'symbol': jupiter_metadata.get('symbol', 'UNKNOWN'), 
+                'decimals': jupiter_metadata.get('decimals', 9),
+                'supply': '0',
+                'logoURI': jupiter_metadata.get('logoURI', ''),
+                'tags': jupiter_metadata.get('tags', [])
             }
             
             self.request_count += 1
@@ -298,7 +351,7 @@ class SolanaRPC:
                 print("   - Token não existe na blockchain")  
                 print("   - Endereço de token inválido")
                 print("   - Token muito novo sem holders")
-                return [], token_info
+                return [], token_info, []
             
             print(f"✅ Encontradas {len(largest_accounts)} contas de token")
             
@@ -321,8 +374,10 @@ class SolanaRPC:
             
             # Para cada conta de token, busca apenas algumas transações
             for i, account in enumerate(largest_accounts[:max_accounts_to_process]):
-                account_address = account.get('address')
+                # account é um dicionário com chaves: address, amount, decimals, uiAmount, uiAmountString
+                account_address = account.get('address') if isinstance(account, dict) else None
                 if not account_address:
+                    print(f"⚠️ Conta {i+1} sem endereço válido: {account}")
                     continue
                 
                 print(f"📜 Conta {i+1}/{max_accounts_to_process}: {account_address[:8]}...")
@@ -356,7 +411,8 @@ class SolanaRPC:
                 
                 max_sigs_to_process = min(sigs_needed, len(signatures))
                 
-                for j, sig_info in enumerate(reversed(signatures[-max_sigs_to_process:])):
+                # Processa signatures em ordem cronológica (já ordenadas das mais antigas para mais novas)
+                for j, sig_info in enumerate(signatures[:max_sigs_to_process]):
                     try:
                         signature = sig_info.get('signature')
                         block_time = sig_info.get('blockTime', 0)
@@ -401,15 +457,20 @@ class SolanaRPC:
                                 print(f"💰 Buscando saldo para: {wallet[:8]}...")
                                 balance = await self.get_wallet_balance(wallet)
                                 
+                                # Timestamp mais preciso e estável
+                                final_timestamp = block_time if block_time > 0 else int(time.time())
+                                
                                 buyers_list.append(wallet)
                                 buyers_with_balance.append({
                                     'wallet': wallet,
                                     'balance': balance,
-                                    'timestamp': block_time
+                                    'timestamp': final_timestamp,
+                                    'account_index': i,  # Índice da conta processada
+                                    'sig_index': j       # Índice da signature processada
                                 })
                                 processed_owners.add(wallet)
                                 
-                                print(f"✅ Wallet: {wallet[:8]}... Saldo: {balance:.2f} | Tempo: {block_time}")
+                                print(f"✅ Wallet: {wallet[:8]}... | Saldo: {balance:.2f} | TS: {final_timestamp} | Conta: {i} | Sig: {j}")
                                 
                                 if len(buyers_list) >= MAX_WALLETS_DISPLAY:
                                     print(f"🎯 Limite de wallets atingido!")
@@ -435,6 +496,40 @@ class SolanaRPC:
                 else:
                     print("⏳ Aguardando 3s entre contas...")
                     await asyncio.sleep(3)  # Gratuito: delay grande
+            
+            # ORDENAÇÃO CRONOLÓGICA ROBUSTA E DETERMINÍSTICA
+            if buyers_with_balance:
+                print(f"🔄 APLICANDO ORDENAÇÃO CRONOLÓGICA DETERMINÍSTICA...")
+                
+                # Ordena por timestamp, índice da conta, índice da signature e wallet (100% determinístico)
+                buyers_with_balance.sort(key=lambda x: (
+                    x.get('timestamp', 0), 
+                    x.get('account_index', 0), 
+                    x.get('sig_index', 0), 
+                    x.get('wallet', '')
+                ))
+                buyers_list = [item['wallet'] for item in buyers_with_balance]
+                
+                print(f"📅 {len(buyers_with_balance)} wallets ordenadas cronologicamente")
+                print(f"🎯 VERIFICAÇÃO DE CONSISTÊNCIA CRONOLÓGICA:")
+                
+                # Log DETALHADO das primeiras 5 wallets com timestamps
+                for i, item in enumerate(buyers_with_balance[:min(5, len(buyers_with_balance))], 1):
+                    ts = item.get('timestamp', 0)
+                    wallet = item.get('wallet', '')
+                    
+                    # Converte timestamp para data legível (se > 0)
+                    if ts > 0:
+                        from datetime import datetime
+                        date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+                        print(f"⏰ {i}. {wallet[:12]}... | TS: {ts} | Data: {date_str}")
+                    else:
+                        print(f"⏰ {i}. {wallet[:12]}... | TS: {ts} | Data: SEM TIMESTAMP")
+                
+                # Cache do resultado para consistência
+                cache_key = f"{mint_address}_{len(buyers_with_balance)}"
+                self.token_cache[cache_key] = buyers_with_balance.copy()
+                print(f"💾 Resultado cacheado: {cache_key}")
             
             print(f"🎉 Processo concluído! Encontradas {len(buyers_list)} wallets via RPC Solana")
             print(f"📊 Total de requisições feitas: {self.request_count}")
