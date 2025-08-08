@@ -31,9 +31,9 @@ SOLANA_RPC_URLS = [HELIUS_RPC_URL]
 # Configurações especiais por RPC (vazio para Helius)
 RPC_CONFIGS = {}
 
-# Configurações otimizadas para Helius (sem limitações de velocidade)
+# Configurações otimizadas para Helius (velocidade máxima)
 RPC_RETRY_ATTEMPTS = int(os.getenv('RPC_RETRY_ATTEMPTS', '1'))  # Tentativa única - Helius é confiável
-RPC_RETRY_DELAY = float(os.getenv('RPC_RETRY_DELAY', '0.1'))  # Delay mínimo entre tentativas
+RPC_RETRY_DELAY = float(os.getenv('RPC_RETRY_DELAY', '0.0'))  # SEM delay entre tentativas
 RPC_REQUEST_DELAY = float(os.getenv('RPC_REQUEST_DELAY', '0.0'))  # SEM delay entre requisições
 
 # Configurações do bot (lidas do .env ou valores padrão)

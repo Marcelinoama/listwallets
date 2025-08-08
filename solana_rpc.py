@@ -4,7 +4,7 @@ import json
 import random
 import time
 from typing import List, Dict, Optional, Set
-from config import SOLANA_RPC_URLS, MAX_WALLETS_DISPLAY, RPC_RETRY_ATTEMPTS, RPC_RETRY_DELAY, RPC_REQUEST_DELAY, RPC_CONFIGS
+from config import SOLANA_RPC_URLS, RPC_RETRY_ATTEMPTS, RPC_RETRY_DELAY, RPC_REQUEST_DELAY, RPC_CONFIGS
 import base64
 import base58
 
@@ -107,7 +107,7 @@ class SolanaRPC:
             print(f"⚠️ Erro ao buscar saldo: {e}")
         return 0.0
     
-    async def rpc_request(self, method: str, params: list, timeout: int = 30) -> Optional[Dict]:
+    async def rpc_request(self, method: str, params: list, timeout: int = 60) -> Optional[Dict]:
         """Faz requisição RPC para Solana com retry automático e rate limiting"""
         
         for rpc_attempt in range(len(self.rpc_urls)):
@@ -123,10 +123,8 @@ class SolanaRPC:
                 }
                 
                 try:
-                    # Helius não precisa de delays - tentativa imediata
-                    if retry_attempt > 0:
-                        # Delay mínimo apenas se houver retry (muito improvável com Helius)
-                        await asyncio.sleep(0.1)
+                    # Helius não precisa de delays - processo contínuo
+                    pass  # Sem delays entre tentativas
                     
                     # Verifica se este RPC precisa de headers especiais (ex: Tatum)
                     headers = {}
@@ -278,7 +276,7 @@ class SolanaRPC:
             url = f"https://tokens.jup.ag/token/{mint_address}"
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
                         data = await response.json()
                         print(f"✅ Jupiter API: Metadados encontrados para {mint_address[:8]}...")
@@ -357,17 +355,9 @@ class SolanaRPC:
             processed_owners = set()
             
             # Calcula quantas contas processar - mais agressivo com RPC premium
-            if self.is_using_premium_rpc():
-                # RPC premium: sem limitações, pode processar muito mais
-                accounts_needed = min(20, len(largest_accounts), MAX_WALLETS_DISPLAY // 2)
-                print(f"⭐ RPC Premium detectado - processamento acelerado!")
-            else:
-                # RPC gratuito: limitações para evitar rate limiting
-                accounts_needed = max(3, min(10, (MAX_WALLETS_DISPLAY // 3) + 2))
-                print(f"⚙️ RPC gratuito - processamento conservador")
-            
-            max_accounts_to_process = min(accounts_needed, len(largest_accounts))
-            print(f"⚙️ Processando {max_accounts_to_process} contas para buscar {MAX_WALLETS_DISPLAY} wallets")
+            # Helius - processa TODAS as contas sem limitações
+            max_accounts_to_process = len(largest_accounts)
+            print(f"🚀 Helius: Processando TODAS as {max_accounts_to_process} contas (sem limites)")
             
             # Para cada conta de token, busca apenas algumas transações
             for i, account in enumerate(largest_accounts[:max_accounts_to_process]):
@@ -382,8 +372,8 @@ class SolanaRPC:
                 # Busca signatures para a conta
                 self.request_count += 1
                 
-                # Helius não precisa de delays - sempre máxima performance
-                signatures_limit = 100  # Helius aguenta requisições grandes
+                # Helius - busca TODAS as transações (sem limite)
+                signatures_limit = 1000  # Limite alto para pegar mais wallets
                 
                 signatures = await self.get_signatures_for_address(account_address, signatures_limit)
                 
@@ -393,15 +383,9 @@ class SolanaRPC:
                 
                 print(f"✅ Encontradas {len(signatures)} transações")
                 
-                # Calcula quantas transações processar - otimizado para premium
-                if self.is_using_premium_rpc():
-                    # RPC premium: processa mais transações
-                    sigs_needed = min(20, len(signatures), MAX_WALLETS_DISPLAY // max_accounts_to_process + 5)
-                else:
-                    # RPC gratuito: limitado
-                    sigs_needed = max(3, min(10, MAX_WALLETS_DISPLAY // max_accounts_to_process))
-                
-                max_sigs_to_process = min(sigs_needed, len(signatures))
+                # Helius - processa TODAS as transações (sem limite)
+                max_sigs_to_process = len(signatures)
+                print(f"🚀 Helius: processando TODAS as {max_sigs_to_process} transações")
                 
                 # Processa signatures em ordem cronológica (já ordenadas das mais antigas para mais novas)
                 for j, sig_info in enumerate(signatures[:max_sigs_to_process]):
@@ -461,22 +445,18 @@ class SolanaRPC:
                                 
                                 print(f"✅ Wallet: {wallet[:8]}... | Saldo: {balance:.2f} | TS: {final_timestamp} | Conta: {i} | Sig: {j}")
                                 
-                                if len(buyers_list) >= MAX_WALLETS_DISPLAY:
-                                    print(f"🎯 Limite de wallets atingido!")
-                                    break
+                                # Helius - continua coletando TODAS as wallets (sem limite)
                                     
                             elif wallet and wallet in self.SYSTEM_PROGRAMS:
                                 print(f"🔧 Programa filtrado: {wallet[:8]}... (sistema Solana)")
                         
-                        if len(buyers_list) >= MAX_WALLETS_DISPLAY:
-                            break
+                                                        # Helius - continua coletando TODAS as wallets
                             
                     except Exception as e:
                         print(f"⚠️ Erro ao processar transação: {e}")
                         continue
                 
-                if len(buyers_list) >= MAX_WALLETS_DISPLAY:
-                    break
+                                                # Helius - continua coletando TODAS as wallets
                 
                 # Helius processa tudo sem delays
                 print("⚡ Helius: processamento contínuo sem delays...")

@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 from typing import List, Dict, Set
 import json
-from config import SOLSCAN_API_BASE, SOLSCAN_HEADERS, SOLSCAN_PRO_API_KEY, MAX_WALLETS_DISPLAY
+from config import SOLSCAN_API_BASE, SOLSCAN_HEADERS, SOLSCAN_PRO_API_KEY
 from solana_rpc import solana_rpc
 
 class SolscanAPI:
@@ -58,7 +58,7 @@ class SolscanAPI:
             print(f"⚠️ Erro ao buscar saldo via Solscan: {e}")
             return 0.0
         
-    async def get_token_transactions(self, token_address: str, limit: int = 2000) -> List[Dict]:
+    async def get_token_transactions(self, token_address: str, limit: int = 10000) -> List[Dict]:
         """
         Busca transações de um token específico no Solscan
         Retorna transações ordenadas por tempo (mais antigas primeiro)
@@ -117,7 +117,7 @@ class SolscanAPI:
         # Fallback: Jupiter API
         try:
             jupiter_url = f"https://tokens.jup.ag/token/{token_address}"
-            async with session.get(jupiter_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            async with session.get(jupiter_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
                     data = await response.json()
                     print(f"✅ Jupiter API: Metadados encontrados para {token_address[:8]}...")
